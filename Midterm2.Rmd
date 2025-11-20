@@ -1,0 +1,290 @@
+---
+title: "Midterm2"
+author: "Kyla Mackenzie"
+date: "2025-11-15"
+output: html_document
+---
+```{r}
+library(patchwork)
+library(tidyverse)
+library(maps)
+```
+
+```{r}
+## Problem 1: Maps
+
+production <- read.csv("milk-production-tonnes.csv")
+consumption <- read.csv("per-capita-milk-consumption.csv")
+
+production_new <- production %>%
+  mutate(Milk_Production = Milk.Production..tonnes.,
+         Country = Entity)
+consumption_new <- consumption %>%
+  mutate(Milk_Consumption = Milk.consumption..kilograms.per.year.per.capita.,
+         Country = Entity)
+```
+
+```{r}
+joined_data <- inner_join(production_new, consumption_new, by = c("Country","Code","Year"))
+joined_data <- joined_data %>%
+  select("Country","Year","Code","Milk_Production","Milk_Consumption")
+glimpse(joined_data)
+
+average <- joined_data %>%
+  mutate(Milk_Production = as.numeric(Milk_Production),
+         Milk_Consumption = as.numeric(Milk_Consumption)) %>%
+  mutate(Country = case_when(Country == "United States" ~ "USA",
+                             Country == "United Kingdon" ~ "UK",
+                             Country == "Czechia" ~ "Czech Republic",
+                             Country == "Slovakia" ~ "Slovak Republic",
+                             Country == "Congo" ~ "Republic of Congo",
+                             .default = Country)) %>%
+  group_by(Country, Code) %>%
+  summarise(Averaage_prod = mean(Milk_Production, na.rm = TRUE),
+            Average_cons = mean(Milk_Consumption, na.rm = TRUE),
+            .groups = "drop") 
+glimpse(average)
+```
+
+```{r}
+map <- map_data("world") 
+glimpse(map)
+
+new_map <- map %>%
+  rename(Country = region)
+
+final_map <- inner_join(new_map, average, by = "Country")
+
+average_prod_plot <- ggplot(data = final_map, aes(x = long, y = lat, group = group, fill = Averaage_prod)) +
+  geom_polygon(color = "gray") +
+  scale_fill_viridis_c(option = "plasma", name = "Average Production",
+                       labels = scales::comma) +
+  theme(legend.position = "right") +
+  theme_minimal()
+```
+
+```{r}
+average_cons_plot <- ggplot(data = final_map, aes(x = long, y = lat, group = group, fill = Average_cons)) +
+  geom_polygon(color = "gray") +
+  scale_fill_viridis_c(option = "plasma", name = "Average Production") +
+  theme(legend.position = "right") +
+  theme_minimal()
+```
+
+```{r}
+world_trends <- joined_data %>%
+  filter(Country == "World") %>%
+  mutate(Year = as.numeric(Year))
+
+trend_data_plot <- ggplot(data = world_trends, aes( x = Year, y = Milk_Production)) +
+  geom_line(color = "firebrick4", size = 1.5) +
+  scale_y_continuous() +
+  theme(legend.position = "left") +
+  theme_minimal()
+```
+
+```{r}
+prod_vs_cons_plot <- ggplot(average, aes(x = Averaage_prod, y = Average_cons)) +
+  geom_point(aes(size = Averaage_prod, color = Average_cons)) +
+  geom_smooth(method = "lm", color = "darkblue") +
+  scale_color_viridis_c(name = "Average Consumption") +
+  theme(legend.position = "bottom") +
+  theme_minimal()
+```
+
+```{r}
+library(ggthemes)
+library(scales)
+
+p.dash <- (trend_data_plot + prod_vs_cons_plot) / (average_prod_plot + average_cons_plot) +
+  plot_layout(heights=c(1.5,3)) +
+  plot_annotation(title = "World Dairy Production and Consumption",
+                  subtitle = "These trends highlight high production in areas with large economies",
+                  theme = theme(plot.margin = unit(c(1,0.5,1,0.5),"cm"))) 
+p.dash
+
+ggsave(filename="WorldDairyProductionandConsumption.png", plot=p.dash,
+       dpi=600, width=10, height=6)
+```
+
+```{r}
+## Problem 2: Taylor Swift Data
+
+library(tidyverse)
+library(tidytext)
+library(wordcloud)
+library(readr)
+library(scales)
+library(ggwordcloud)
+
+tswift_lyrics <- read_csv("taylor_swift_genius_data.csv")
+
+
+
+album_1 <- "Red"
+album_2 <- "Midnights"
+
+red_lyrics <- tswift_lyrics %>%
+  filter(Album == album_1)
+
+midnights_lyrics <- tswift_lyrics %>%
+  filter(Album == album_2)
+
+included_albums <- tswift_lyrics %>%
+  filter(Album %in% c(album_1, album_2))
+```
+
+```{r}
+filtered_lyrics <- included_albums %>%
+  unnest_tokens(word, Lyrics) %>%
+  anti_join(stop_words, by = "word")
+glimpse(filtered_lyrics)
+```
+
+```{r}
+combined_cloud <- filtered_lyrics %>%
+  group_by(Album, word) %>%
+  summarise(N=n(), .groups = "drop") %>%
+  slice_max(N, n=100, by = Album) 
+
+combined_wordcloud <- ggplot(combined_cloud, aes(label=word, size=N, color=Album)) +
+  geom_text_wordcloud() +
+  scale_size_area(max_size=15) +
+  theme_minimal() +
+  facet_wrap(~Album, ncol = 2)
+```
+
+```{r}
+lyric_sentiments <- filtered_lyrics %>%
+  inner_join(get_sentiments("bing"), by = "word") 
+
+album_sent <- lyric_sentiments %>%
+  count(Album, sentiment) %>%
+  group_by(Album) %>%
+  mutate(proportion = n/sum(n)) %>%
+  ungroup()
+
+sent_comparison <- ggplot(album_sent) +
+  geom_col(aes(x=Album, y= proportion, fill=sentiment)) +
+  scale_fill_brewer(palette="Blues") +
+  coord_cartesian(expand=F) +
+  annotate("text", x=1, y=0.7, label="Negative\nWords") +
+  annotate("text", x=2, y=0.2, label="Positive\nWords") +
+  labs(title="Proportion of Positive and Negative Words",
+       subtitle="Taylors Midnight and Red") +
+  theme_minimal() +
+  theme(axis.title=element_blank(),
+        legend.position="none")
+```
+
+```{r}
+spotify <- read_csv("taylor_swift_spotify_data.csv")
+
+spotify_tidy <- spotify %>%
+  select(Album, `Song Name`, Danceability, Energy, Key, Tempo)
+
+song_sent <- lyric_sentiments %>%
+  count(Album, `Song Name`, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n) %>%
+  mutate(sentiment_words = positive + negative,
+         sent_score = ((positive-negative)/sentiment_words)) %>%
+  left_join(spotify_tidy, by = c("Album", "Song Name"))
+```
+
+```{r}
+danceability_plot <- ggplot(song_sent, aes(x = sent_score, y = Danceability)) +
+  geom_point(aes(color = Album), size = 3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sentiment vs. Danceability",
+       subtitle = "Taylor Swift's Midnight and Red Albums") +
+  theme_minimal()
+```
+
+```{r}
+tempo_plot <- ggplot(song_sent, aes(x = sent_score, y = Tempo)) +
+  geom_point(aes(color = Album), size = 3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sentiment vs. Tempo",
+       subtitle = "Taylor Swift's Midnight and Red Albums") +
+  theme_minimal()
+```
+
+```{r}
+energy_plot <- ggplot(song_sent, aes(x = sent_score, y = Energy)) +
+  geom_point(aes(color = Album), size = 3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sentiment vs. Energy",
+       subtitle = "Taylor Swift's Midnight and Red Albums") +
+  theme_minimal()
+```
+
+```{r}
+key_plot <- ggplot(song_sent, aes(x = sent_score, y = Key)) +
+  geom_point(aes(color = Album), size = 3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sentiment vs. Key",
+       subtitle = "Taylor Swift's Midnight and Red Albums") +
+  theme_minimal()
+```
+
+```{r}
+## Combination for dashboard
+
+sent_comparison <- ggplot(album_sent) +
+  geom_col(aes(x=Album, y= proportion, fill=sentiment)) +
+  scale_fill_brewer(palette="Blues") +
+  coord_cartesian(expand=F) +
+  annotate("text", x=1, y=0.7, label="Negative\nWords") +
+  annotate("text", x=2, y=0.2, label="Positive\nWords") +
+  labs(title="Proportion of Positive and Negative Words",
+       subtitle="Taylors Midnight and Red") +
+  theme_minimal() +
+  theme(axis.title=element_blank(),
+        legend.position="none")
+
+danceability_plot <- ggplot(song_sent, aes(x = sent_score, y = Danceability)) +
+  geom_point(aes(color = Album), size = 3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sentiment vs. Danceability",
+       subtitle = "Taylor Swift's Midnight and Red Albums") +
+  theme_minimal()
+
+tempo_plot <- ggplot(song_sent, aes(x = sent_score, y = Tempo)) +
+  geom_point(aes(color = Album), size = 3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sentiment vs. Tempo",
+       subtitle = "Taylor Swift's Midnight and Red Albums") +
+  theme_minimal()
+
+energy_plot <- ggplot(song_sent, aes(x = sent_score, y = Energy)) +
+  geom_point(aes(color = Album), size = 3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sentiment vs. Energy",
+       subtitle = "Taylor Swift's Midnight and Red Albums") +
+  theme_minimal()
+
+key_plot <- ggplot(song_sent, aes(x = sent_score, y = Key)) +
+  geom_point(aes(color = Album), size = 3) +
+  geom_smooth(method = "lm") +
+  labs(title = "Sentiment vs. Key",
+       subtitle = "Taylor Swift's Midnight and Red Albums") +
+  theme_minimal()
+
+p.dash2 <- 
+  (sent_comparison + combined_wordcloud) / 
+  (energy_plot + danceability_plot) /
+  (tempo_plot + key_plot) +
+  
+  plot_layout(heights = c(1, 1, 1), guides = "collect") +
+  plot_annotation(
+    title = "Taylor Swift Sentiment Analysis: Red vs. Midnights",
+    subtitle = "Comparison of Lyrical Tone and Word Frequency",
+    caption = "Data Source: Spotify & Genius Lyrics"
+  )
+p.dash2
+
+ggsave(filename="Tswift.png", plot=p.dash,
+       dpi=600, width=10, height=6)
+```
+
+
